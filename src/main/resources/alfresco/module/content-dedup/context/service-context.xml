@@ -8,14 +8,14 @@
     <!--
         DuplicateContentCheckBehaviour
         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        Bound to OnContentUpdatePolicy on cm:content with EVERY_EVENT so it
-        fires within the upload transaction.  Throwing DuplicateContentException
+        Bound to OnContentUpdatePolicy on cm:content with TRANSACTION_COMMIT so
+        it fires once per transaction in the beforeCommit phase, after content
+        writes and versioning have settled.  Throwing DuplicateContentException
         from the callback causes the transaction to roll back.
 
         Configuration properties (alfresco-global.properties):
-          content.dedup.enabled             = true
-          content.dedup.hash.algorithm      = SHA-256
-          content.dedup.lock.timeoutSeconds = 30
+          content.dedup.enabled        = true
+          content.dedup.hash.algorithm = SHA-256
     -->
     <bean id="cdd.duplicateContentCheckBehaviour"
           class="org.alfresco.contentdedup.behaviour.DuplicateContentCheckBehaviour"
@@ -26,7 +26,6 @@
         <property name="contentService"    ref="ContentService"/>
         <property name="nodeService"       ref="NodeService"/>
         <property name="searchService"     ref="SearchService"/>
-        <property name="lockService"       ref="LockService"/>
         <property name="fileFolderService" ref="FileFolderService"/>
 
         <!--
@@ -35,9 +34,8 @@
             with Spring's colon syntax so the bean starts safely even when the
             properties file has not been customised.
         -->
-        <property name="enabled"            value="${content.dedup.enabled:true}"/>
-        <property name="hashAlgorithm"      value="${content.dedup.hash.algorithm:SHA-256}"/>
-        <property name="lockTimeoutSeconds" value="${content.dedup.lock.timeoutSeconds:30}"/>
+        <property name="enabled"       value="${content.dedup.enabled:true}"/>
+        <property name="hashAlgorithm" value="${content.dedup.hash.algorithm:SHA-256}"/>
 
     </bean>
 

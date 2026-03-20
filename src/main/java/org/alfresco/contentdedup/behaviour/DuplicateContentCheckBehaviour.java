@@ -5,8 +5,6 @@ import org.alfresco.model.ContentModel;
 import org.alfresco.repo.content.ContentServicePolicies;
 import org.alfresco.repo.policy.JavaBehaviour;
 import org.alfresco.repo.policy.PolicyComponent;
-import org.alfresco.service.cmr.lock.LockService;
-import org.alfresco.service.cmr.lock.LockType;
 import org.alfresco.service.cmr.model.FileFolderService;
 import org.alfresco.service.cmr.model.FileInfo;
 import org.alfresco.service.cmr.repository.ChildAssociationRef;
@@ -35,7 +33,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.alfresco.repo.policy.Behaviour.NotificationFrequency.EVERY_EVENT;
+import static org.alfresco.repo.policy.Behaviour.NotificationFrequency.TRANSACTION_COMMIT;
 
 /**
  * In-process behaviour that prevents duplicate content from being stored in
@@ -43,15 +41,23 @@ import static org.alfresco.repo.policy.Behaviour.NotificationFrequency.EVERY_EVE
  *
  * <h3>Trigger</h3>
  * <p>Bound to {@link ContentServicePolicies.OnContentUpdatePolicy} on
- * {@code cm:content} with {@code EVERY_EVENT} so it fires within the same
- * database transaction as the upload, before the transaction commits.
- * Throwing an unchecked exception from this method causes a full rollback.</p>
+ * {@code cm:content} with {@code TRANSACTION_COMMIT}.  The policy fires once
+ * per transaction, in the {@code beforeCommit} phase, after all content writes
+ * and versioning work have settled.  Throwing an unchecked exception from this
+ * method causes a full rollback of the upload transaction.</p>
+ *
+ * <h3>Why TRANSACTION_COMMIT instead of EVERY_EVENT</h3>
+ * <p>{@code EVERY_EVENT} fires inline when the content stream is closed, which
+ * is before {@code cm:versionable} processing and other post-write behaviours
+ * have completed.  In that window {@code nodeService.addAspect()} can interact
+ * unexpectedly with concurrently running node policies, causing the
+ * {@code cdd:sha256Hash} property to be dropped silently.  Firing at
+ * {@code TRANSACTION_COMMIT} guarantees the node is fully settled, the content
+ * stream is readable, and property writes succeed reliably.</p>
  *
  * <h3>Algorithm</h3>
  * <ol>
  *   <li>Compute the SHA-256 (configurable) digest of the uploaded content stream.</li>
- *   <li>Acquire a {@code WRITE_LOCK} on the parent folder to serialise
- *       concurrent uploads of identical files (see §Concurrency below).</li>
  *   <li>Query the repository with {@code QueryConsistency.TRANSACTIONAL}
  *       (DB-backed, bypasses Solr indexing lag) for existing nodes carrying the
  *       same hash inside the target folder, or the full ancestor hierarchy when
@@ -62,18 +68,10 @@ import static org.alfresco.repo.policy.Behaviour.NotificationFrequency.EVERY_EVE
  *       the hash so future uploads can find this node.</li>
  * </ol>
  *
- * <h3>Concurrency</h3>
- * <p>The folder-level {@code WRITE_LOCK} serialises the check-and-write window
- * within a single ACS node. {@code UnableToAquireLockException} propagates up to
- * Alfresco's {@code RetryingTransactionHelper} at the REST layer, which retries
- * the entire request; the second attempt will then find the committed hash and
- * reject the duplicate.</p>
- *
  * <h3>Configuration ({@code alfresco-global.properties})</h3>
  * <ul>
  *   <li>{@code content.dedup.enabled} — master on/off switch (default: {@code true})</li>
  *   <li>{@code content.dedup.hash.algorithm} — digest algorithm (default: {@code SHA-256})</li>
- *   <li>{@code content.dedup.lock.timeoutSeconds} — folder lock TTL in seconds (default: {@code 30})</li>
  * </ul>
  */
 public class DuplicateContentCheckBehaviour
@@ -105,16 +103,14 @@ public class DuplicateContentCheckBehaviour
     private ContentService    contentService;
     private NodeService       nodeService;
     private SearchService     searchService;
-    private LockService       lockService;
     private FileFolderService fileFolderService;
 
     // -----------------------------------------------------------------------
     // Configurable properties
     // -----------------------------------------------------------------------
 
-    private boolean enabled           = true;
-    private String  hashAlgorithm     = "SHA-256";
-    private int     lockTimeoutSeconds = 30;
+    private boolean enabled       = true;
+    private String  hashAlgorithm = "SHA-256";
 
     // -----------------------------------------------------------------------
     // Spring setters
@@ -136,10 +132,6 @@ public class DuplicateContentCheckBehaviour
         this.searchService = searchService;
     }
 
-    public void setLockService(LockService lockService) {
-        this.lockService = lockService;
-    }
-
     public void setFileFolderService(FileFolderService fileFolderService) {
         this.fileFolderService = fileFolderService;
     }
@@ -152,10 +144,6 @@ public class DuplicateContentCheckBehaviour
         this.hashAlgorithm = hashAlgorithm;
     }
 
-    public void setLockTimeoutSeconds(int lockTimeoutSeconds) {
-        this.lockTimeoutSeconds = lockTimeoutSeconds;
-    }
-
     // -----------------------------------------------------------------------
     // Behaviour registration
     // -----------------------------------------------------------------------
@@ -165,10 +153,10 @@ public class DuplicateContentCheckBehaviour
         policyComponent.bindClassBehaviour(
                 ContentServicePolicies.OnContentUpdatePolicy.QNAME,
                 ContentModel.TYPE_CONTENT,
-                new JavaBehaviour(this, "onContentUpdate", EVERY_EVENT));
+                new JavaBehaviour(this, "onContentUpdate", TRANSACTION_COMMIT));
 
-        LOG.info("DuplicateContentCheckBehaviour registered — enabled={}, algorithm={}, lockTimeout={}s",
-                enabled, hashAlgorithm, lockTimeoutSeconds);
+        LOG.info("DuplicateContentCheckBehaviour registered — enabled={}, algorithm={}",
+                enabled, hashAlgorithm);
     }
 
     // -----------------------------------------------------------------------
@@ -176,10 +164,11 @@ public class DuplicateContentCheckBehaviour
     // -----------------------------------------------------------------------
 
     /**
-     * Called by the ContentService whenever the primary content stream of a
-     * {@code cm:content} node is written or overwritten.
+     * Called once per transaction at {@code beforeCommit} for every
+     * {@code cm:content} node whose primary content stream was written or
+     * overwritten during that transaction.
      *
-     * @param nodeRef    the node whose content was just updated
+     * @param nodeRef    the node whose content was updated
      * @param newContent {@code true} if this is a first-time write; {@code false} for an overwrite
      */
     @Override
@@ -219,31 +208,18 @@ public class DuplicateContentCheckBehaviour
         LOG.debug("Duplicate check: node={}, hash={}, scope-depth={}, newContent={}",
                 nodeRef, hash, scope.size(), newContent);
 
-        // Acquire a folder-level write lock to serialise the check-and-write
-        // window. UnableToAquireLockException propagates to RetryingTransactionHelper.
-        lockService.lock(parentFolder, LockType.WRITE_LOCK, lockTimeoutSeconds);
-        try {
-            NodeRef duplicate   = findDuplicate(hash, nodeRef, scope);
+        NodeRef duplicate = findDuplicate(hash, nodeRef, scope);
 
-            if (duplicate != null) {
-                String name = (String) nodeService.getProperty(duplicate, ContentModel.PROP_NAME);
-                String path = resolveDisplayPath(duplicate);
-                LOG.debug("Duplicate detected — existing: id={}, name={}, path={}", duplicate, name, path);
-                throw new DuplicateContentException(duplicate, name, path);
-            }
-
-            // No duplicate — record the hash on this node.
-            storeHash(nodeRef, hash);
-            LOG.debug("Hash {} stored on node {}", hash, nodeRef);
-
-        } finally {
-            try {
-                lockService.unlock(parentFolder);
-            } catch (Exception e) {
-                // Non-fatal: lock will expire via TTL if unlock fails.
-                LOG.warn("Could not release duplicate-check lock on folder {}: {}", parentFolder, e.getMessage());
-            }
+        if (duplicate != null) {
+            String name = (String) nodeService.getProperty(duplicate, ContentModel.PROP_NAME);
+            String path = resolveDisplayPath(duplicate);
+            LOG.debug("Duplicate detected — existing: id={}, name={}, path={}", duplicate, name, path);
+            throw new DuplicateContentException(duplicate, name, path);
         }
+
+        // No duplicate — record the hash on this node.
+        storeHash(nodeRef, hash);
+        LOG.debug("Hash {} stored on node {}", hash, nodeRef);
     }
 
     // -----------------------------------------------------------------------

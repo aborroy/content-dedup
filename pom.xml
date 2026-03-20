@@ -26,8 +26,10 @@
         <alfresco.platform.version>26.1.0</alfresco.platform.version>
         <alfresco.platform.war.artifactId>alfresco-community</alfresco.platform.war.artifactId>
         <junit.jupiter.version>5.10.2</junit.jupiter.version>
+        <testcontainers.version>1.19.8</testcontainers.version>
         <maven.compiler.plugin.version>3.13.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
+        <maven.failsafe.plugin.version>3.2.5</maven.failsafe.plugin.version>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -39,6 +41,13 @@
                 <groupId>org.alfresco</groupId>
                 <artifactId>${alfresco.bomDependency.artifactId}</artifactId>
                 <version>${alfresco.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -72,6 +81,23 @@
             <artifactId>spring-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- SLF4J binding required by Testcontainers -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.13</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -89,9 +115,39 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>${maven.surefire.plugin.version}</version>
                 <configuration>
+                    <!-- Unit tests only — IT classes run via Failsafe -->
                     <excludes>
                         <exclude>**/*IT.java</exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${maven.failsafe.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                    <!--
+                        Pass -Dacs.endpoint.path=http://host:8080 to also run
+                        DuplicateContentCheckIT against an external ACS instance.
+                        Without that property, DuplicateContentCheckIT skips itself
+                        and only DuplicateContentCheckContainerIT runs.
+                    -->
+                    <systemPropertyVariables>
+                        <acs.endpoint.path>${acs.endpoint.path}</acs.endpoint.path>
+                        <acs.username>${acs.username}</acs.username>
+                        <acs.password>${acs.password}</acs.password>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>

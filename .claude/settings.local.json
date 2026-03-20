@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(aiup-alfresco:content-model-validator)",
+      "Bash(chmod:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker ps:*)",
+      "Bash(grep -E \"Behaviour|behaviour|class$\")",
+      "Bash(curl -s -u admin:admin \"http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/71963200-6274-4633-9632-0062747633b8?fields=createdAt,modifiedAt,name\")",
+      "Bash(python3 -m json.tool curl -s -u admin:admin \"http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/b8c2cfaa-525f-485b-82cf-aa525fe85b1c?fields=createdAt,modifiedAt,name\")",
+      "Bash(python3 -m json.tool curl -s -u admin:admin \"http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/21302cfc-8434-4292-b02c-fc843412929d?fields=createdAt,modifiedAt,name\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -u admin:admin \"http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/21302cfc-8434-4292-b02c-fc843412929d?include=properties\")",
+      "Bash(curl -s -u admin:admin -F \"filedata=@/tmp/sample-2-copy.md;type=text/x-markdown\" -F \"name=duplicate-test-2.md\" -F \"nodeType=cm:content\" \"http://localhost:8080/alfresco/api/-default-/public/alfresco/versions/1/nodes/730fd383-e31a-4be0-8fd3-83e31afbe05a/children\")"
+    ]
+  }
+}

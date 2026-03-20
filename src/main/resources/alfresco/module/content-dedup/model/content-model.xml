@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model name="cdd:contentModel" xmlns="http://www.alfresco.org/model/dictionary/1.0">
+
+    <description>Content deduplication model — SHA-256 hash tracking and
+        hierarchy-scoped duplicate detection.</description>
+    <version>1.0</version>
+
+    <imports>
+        <import uri="http://www.alfresco.org/model/dictionary/1.0" prefix="d"/>
+        <import uri="http://www.alfresco.org/model/content/1.0" prefix="cm"/>
+    </imports>
+
+    <namespaces>
+        <namespace uri="http://www.example.com/model/content-dedup/1.0" prefix="cdd"/>
+    </namespaces>
+
+    <!-- ================================================================
+         Constraints
+         ================================================================ -->
+    <constraints>
+
+        <!--
+            SHA-256 hex digest is always exactly 64 lowercase hex characters.
+            Both constraints are applied to cdd:sha256Hash; the REGEX is the
+            authoritative check and the LENGTH guard provides a fast early fail.
+        -->
+        <constraint name="cdd:sha256HashLengthConstraint" type="LENGTH">
+            <parameter name="minLength"><value>64</value></parameter>
+            <parameter name="maxLength"><value>64</value></parameter>
+        </constraint>
+
+        <constraint name="cdd:sha256HashRegexConstraint" type="REGEX">
+            <!-- Exactly 64 lowercase hex characters -->
+            <parameter name="expression"><value>[a-f0-9]{64}</value></parameter>
+            <parameter name="requiresMatch"><value>true</value></parameter>
+        </constraint>
+
+    </constraints>
+
+    <!-- ================================================================
+         Aspects
+         ================================================================ -->
+    <aspects>
+
+        <!--
+            cdd:hashable
+            ~~~~~~~~~~~
+            Applied automatically by DuplicateContentCheckBehaviour to every
+            content node that survives the duplicate check.  The stored hash
+            is used by subsequent uploads for transactional (db-afts) lookups
+            without relying on Solr indexing lag.
+        -->
+        <aspect name="cdd:hashable">
+            <title>Hashable</title>
+            <description>Marks a content node as having had its SHA-256 hash
+                computed and stored after a successful duplicate check.</description>
+            <properties>
+                <property name="cdd:sha256Hash">
+                    <title>SHA-256 Content Hash</title>
+                    <description>Lowercase hexadecimal SHA-256 digest of the
+                        node's primary content stream.</description>
+                    <type>d:text</type>
+                    <!--
+                        Do NOT use enforced="true" here.  With enforced="true", ACS fires the
+                        IntegrityChecker immediately via OnAddAspectPolicy, before addAspect()
+                        has written the properties map — causing a spurious IntegrityException.
+                        Without enforced, the check is deferred to beforeCommit, by which time
+                        the behaviour has already set cdd:sha256Hash via addAspect(node, aspect, props).
+                    -->
+                    <mandatory>true</mandatory>
+                    <index enabled="true">
+                        <atomic>true</atomic>
+                        <stored>false</stored>
+                        <tokenised>false</tokenised>
+                    </index>
+                    <constraints>
+                        <constraint ref="cdd:sha256HashLengthConstraint"/>
+                        <constraint ref="cdd:sha256HashRegexConstraint"/>
+                    </constraints>
+                </property>
+            </properties>
+        </aspect>
+
+        <!--
+            cdd:hierarchyCheckEnabled
+            ~~~~~~~~~~~~~~~~~~~~~~~~
+            Marker aspect applied to a folder by an administrator.  When present,
+            DuplicateContentCheckBehaviour extends the hash lookup from the
+            immediate folder to all ancestor folders up to the repository root.
+            No properties — the presence of the aspect is the configuration flag.
+        -->
+        <aspect name="cdd:hierarchyCheckEnabled">
+            <title>Duplicate Check Boundary</title>
+            <description>Marks a folder as the dedup scope boundary.  The behaviour
+                walks ancestor folders from the upload target upward; the first folder
+                carrying this aspect defines the ceiling of the duplicate search.  All
+                folders between the upload target and this boundary are included in the
+                search.  Uploads into folder trees that contain no instance of this
+                aspect anywhere in their ancestor chain are skipped entirely — no
+                hashing is performed, incurring zero overhead.</description>
+        </aspect>
+
+    </aspects>
+
+</model>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+        Registers the content-dedup dictionary model with the Alfresco
+        DictionaryService at startup.  Must resolve after the built-in
+        dictionaryBootstrap so that cm: and d: imports are already loaded.
+    -->
+    <bean id="cdd.dictionaryBootstrap"
+          parent="dictionaryModelBootstrap"
+          depends-on="dictionaryBootstrap">
+        <property name="models">
+            <list>
+                <value>alfresco/module/content-dedup/model/content-model.xml</value>
+            </list>
+        </property>
+    </bean>
+
+</beans>

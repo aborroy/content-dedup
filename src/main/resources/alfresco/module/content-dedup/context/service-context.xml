@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+        DuplicateContentCheckBehaviour
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Bound to OnContentUpdatePolicy on cm:content with EVERY_EVENT so it
+        fires within the upload transaction.  Throwing DuplicateContentException
+        from the callback causes the transaction to roll back.
+
+        Configuration properties (alfresco-global.properties):
+          content.dedup.enabled             = true
+          content.dedup.hash.algorithm      = SHA-256
+          content.dedup.lock.timeoutSeconds = 30
+    -->
+    <bean id="cdd.duplicateContentCheckBehaviour"
+          class="org.alfresco.contentdedup.behaviour.DuplicateContentCheckBehaviour"
+          init-method="afterPropertiesSet">
+
+        <!-- Alfresco platform services -->
+        <property name="policyComponent"   ref="policyComponent"/>
+        <property name="contentService"    ref="ContentService"/>
+        <property name="nodeService"       ref="NodeService"/>
+        <property name="searchService"     ref="SearchService"/>
+        <property name="lockService"       ref="LockService"/>
+        <property name="fileFolderService" ref="FileFolderService"/>
+
+        <!--
+            Runtime configuration — values resolved from alfresco-global.properties
+            via Alfresco's PropertyPlaceholderConfigurer.  Defaults are expressed
+            with Spring's colon syntax so the bean starts safely even when the
+            properties file has not been customised.
+        -->
+        <property name="enabled"            value="${content.dedup.enabled:true}"/>
+        <property name="hashAlgorithm"      value="${content.dedup.hash.algorithm:SHA-256}"/>
+        <property name="lockTimeoutSeconds" value="${content.dedup.lock.timeoutSeconds:30}"/>
+
+    </bean>
+
+</beans>
